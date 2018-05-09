@@ -46,7 +46,7 @@ struct blk_stat_callback;
 struct keyslot_manager;
 
 #define BLKDEV_MIN_RQ	4
-#define BLKDEV_MAX_RQ	64	/* Default maximum */
+#define BLKDEV_MAX_RQ	128	/* Default maximum */
 
 /* Must be consisitent with blk_mq_poll_stats_bkt() */
 #define BLK_MQ_POLL_STATS_BKTS 16
@@ -119,6 +119,8 @@ typedef __u32 __bitwise req_flags_t;
 /* Look at ->special_vec for the actual data payload instead of the
    bio chain. */
 #define RQF_SPECIAL_PAYLOAD	((__force req_flags_t)(1 << 18))
+/* increased nr_pending for this request */
+#define RQF_PM_ADDED		((__force req_flags_t)(1 << 19))
 
 /* flags that prevent us from merging requests: */
 #define RQF_NOMERGE_FLAGS \
@@ -202,13 +204,18 @@ struct request {
 	struct gendisk *rq_disk;
 	struct hd_struct *part;
 	unsigned long start_time;
-	struct blk_issue_stat issue_stat;
-#ifdef CONFIG_BLK_CGROUP
-	struct request_list *rl;		/* rl this rq is alloced from */
-	unsigned long long start_time_ns;
-	unsigned long long io_start_time_ns;    /* when passed to hardware */
+	/* Time that I/O was submitted to the device. */
+	u64 io_start_time_ns;
+
+#ifdef CONFIG_BLK_WBT
+	unsigned short wbt_flags;
 #endif
-	/* Number of scatter-gather DMA addr+len pairs after
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
+	unsigned short throtl_size;
+#endif
+
+	/*
+	 * Number of scatter-gather DMA addr+len pairs after
 	 * physical address coalescing is performed.
 	 */
 	unsigned short nr_phys_segments;
@@ -240,6 +247,11 @@ struct request {
 
 	ktime_t			lat_hist_io_start;
 	int			lat_hist_enabled;
+#ifdef CONFIG_BLK_CGROUP
+	struct request_list *rl;		/* rl this rq is alloced from */
+	unsigned long long cgroup_start_time_ns;
+	unsigned long long cgroup_io_start_time_ns;    /* when passed to hardware */
+#endif
 };
 
 static inline bool blk_op_is_scsi(unsigned int op)
@@ -660,7 +672,7 @@ struct request_queue {
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\
 				 (1 << QUEUE_FLAG_SAME_COMP)	|	\
-				 (1 << QUEUE_FLAG_ADD_RANDOM))
+				 (0 << QUEUE_FLAG_ADD_RANDOM))
 
 #define QUEUE_FLAG_MQ_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\
@@ -1378,6 +1390,7 @@ static inline struct request *blk_map_queue_find_tag(struct blk_queue_tag *bqt,
 }
 
 extern int blkdev_issue_flush(struct block_device *, gfp_t, sector_t *);
+extern void blkdev_issue_flush_nowait(struct block_device *, gfp_t);
 extern int blkdev_issue_write_same(struct block_device *bdev, sector_t sector,
 		sector_t nr_sects, gfp_t gfp_mask, struct page *page);
 
@@ -1769,42 +1782,33 @@ int kblockd_schedule_delayed_work_on(int cpu, struct delayed_work *dwork, unsign
 int kblockd_mod_delayed_work_on(int cpu, struct delayed_work *dwork, unsigned long delay);
 
 #ifdef CONFIG_BLK_CGROUP
-/*
- * This should not be using sched_clock(). A real patch is in progress
- * to fix this up, until that is in place we need to disable preemption
- * around sched_clock() in this function and set_io_start_time_ns().
- */
 static inline void set_start_time_ns(struct request *req)
 {
-	preempt_disable();
-	req->start_time_ns = sched_clock();
-	preempt_enable();
+	req->cgroup_start_time_ns = ktime_get_ns();
 }
 
 static inline void set_io_start_time_ns(struct request *req)
 {
-	preempt_disable();
-	req->io_start_time_ns = sched_clock();
-	preempt_enable();
+	req->cgroup_io_start_time_ns = ktime_get_ns();
 }
 
-static inline uint64_t rq_start_time_ns(struct request *req)
+static inline u64 rq_start_time_ns(struct request *req)
 {
-        return req->start_time_ns;
+	return req->cgroup_start_time_ns;
 }
 
-static inline uint64_t rq_io_start_time_ns(struct request *req)
+static inline u64 rq_io_start_time_ns(struct request *req)
 {
-        return req->io_start_time_ns;
+	return req->cgroup_io_start_time_ns;
 }
 #else
 static inline void set_start_time_ns(struct request *req) {}
 static inline void set_io_start_time_ns(struct request *req) {}
-static inline uint64_t rq_start_time_ns(struct request *req)
+static inline u64 rq_start_time_ns(struct request *req)
 {
 	return 0;
 }
-static inline uint64_t rq_io_start_time_ns(struct request *req)
+static inline u64 rq_io_start_time_ns(struct request *req)
 {
 	return 0;
 }
@@ -2120,6 +2124,10 @@ static inline int blkdev_issue_flush(struct block_device *bdev, gfp_t gfp_mask,
 				     sector_t *error_sector)
 {
 	return 0;
+}
+
+static inline void blkdev_issue_flush_nowait(struct block_device *bdev, gfp_t gfp_mask)
+{
 }
 
 #endif /* CONFIG_BLOCK */
