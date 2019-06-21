@@ -2640,7 +2640,6 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 static inline void cpufreq_update_util(struct rq *rq, unsigned int flags) {}
 #endif /* CONFIG_CPU_FREQ */
 
-#ifdef CONFIG_CPU_FREQ_GOV_SCHEDUTIL
 /**
  * enum schedutil_type - CPU utilization type
  * @FREQUENCY_UTIL:	Utilization used to select frequency
@@ -2656,21 +2655,19 @@ enum schedutil_type {
 	ENERGY_UTIL,
 };
 
-unsigned long schedutil_freq_util(int cpu, unsigned long util_cfs,
-				  unsigned long max, enum schedutil_type type);
+#ifdef CONFIG_CPU_FREQ_GOV_SCHEDUTIL
 
-static inline unsigned long schedutil_energy_util(int cpu, unsigned long cfs)
-{
-	unsigned long max = arch_scale_cpu_capacity(NULL, cpu);
-
-	return schedutil_freq_util(cpu, cfs, max, ENERGY_UTIL);
-}
+unsigned long schedutil_cpu_util(int cpu, unsigned long util_cfs,
+				 unsigned long max, enum schedutil_type type,
+				 struct task_struct *p);
 #else /* CONFIG_CPU_FREQ_GOV_SCHEDUTIL */
-static inline unsigned long schedutil_energy_util(int cpu, unsigned long cfs)
+static inline unsigned long schedutil_cpu_util(int cpu, unsigned long util_cfs,
+				 unsigned long max, enum schedutil_type type,
+				 struct task_struct *p)
 {
-	return cfs;
+	return 0;
 }
-#endif
+#endif /* CONFIG_CPU_FREQ_GOV_SCHEDUTIL */
 
 #ifdef CONFIG_UCLAMP_TASK
 unsigned long uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id);

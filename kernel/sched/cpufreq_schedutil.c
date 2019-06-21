@@ -223,8 +223,29 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	return cpufreq_driver_resolve_freq(policy, freq);
 }
 
-unsigned long schedutil_freq_util(int cpu, unsigned long util_cfs,
-				  unsigned long max, enum schedutil_type type)
+/*
+ * This function computes an effective utilization for the given CPU, to be
+ * used for frequency selection given the linear relation: f = u * f_max.
+ *
+ * The scheduler tracks the following metrics:
+ *
+ *   cpu_util_{cfs,rt,dl,irq}()
+ *   cpu_bw_dl()
+ *
+ * Where the cfs,rt and dl util numbers are tracked with the same metric and
+ * synchronized windows and are thus directly comparable.
+ *
+ * The cfs,rt,dl utilization are the running times measured with rq->clock_task
+ * which excludes things like IRQ and steal-time. These latter are then accrued
+ * in the irq utilization.
+ *
+ * The DL bandwidth number otoh is not a measured metric but a value computed
+ * based on the task model parameters and gives the minimal utilization
+ * required to meet deadlines.
+ */
+unsigned long schedutil_cpu_util(int cpu, unsigned long util_cfs,
+				 unsigned long max, enum schedutil_type type,
+				 struct task_struct *p)
 {
 	unsigned long dl_util, util;
 	struct rq *rq = cpu_rq(cpu);
@@ -241,8 +262,8 @@ unsigned long schedutil_freq_util(int cpu, unsigned long util_cfs,
 	 * to obtain the CPU's actual utilization.
 	 */
 	if (type == FREQUENCY_UTIL)
-		util = uclamp_util(rq, util);
-		
+		util = uclamp_rq_util_with(rq, util, p);
+
 	dl_util = cpu_util_dl(rq);
 
 	/*
@@ -277,12 +298,12 @@ static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
 	sg_cpu->max = max;
 	sg_cpu->util_dl = cpu_util_dl(rq);
 
-#ifdef CONFIG_UCLAMP_TASK
+#ifdef CONFIG_SCHED_WALT
     util =cpu_util_freq_walt(sg_cpu->cpu, &sg_cpu->walt_load);
    	return uclamp_rq_util_with(rq, util, NULL);
 #else
     util = cpu_util_cfs(rq);
-	return schedutil_freq_util(sg_cpu->cpu, util, max, FREQUENCY_UTIL);
+	return schedutil_cpu_util(sg_cpu->cpu, util, max, FREQUENCY_UTIL, NULL);
 #endif
 }
 
