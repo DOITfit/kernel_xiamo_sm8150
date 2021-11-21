@@ -919,11 +919,6 @@ static int pd_select_pdo(struct usbpd *pd, int pdo_pos, int uv, int ua)
 		return -ENOTSUPP;
 	}
 
-	/* Can't sink more than 5V if VCONN is sourced from the VBUS input */
-	if (pd->vconn_enabled && !pd->vconn_is_external &&
-			pd->requested_voltage > 5000000)
-		return -ENOTSUPP;
-
 	pd->requested_current = curr;
 	pd->requested_pdo = pdo_pos;
 
@@ -1833,8 +1828,8 @@ static void usbpd_set_state(struct usbpd *pd, enum usbpd_state next_state)
 			pd->pd_phy_opened = true;
 		}
 
-		pd->current_voltage = pd->requested_voltage = 5000000;
-		val.intval = pd->requested_voltage; /* set max range to 5V */
+		//pd->current_voltage = pd->requested_voltage = 5000000;
+		//val.intval = pd->requested_voltage; /* set max range to 5V */
 		power_supply_set_property(pd->usb_psy,
 				POWER_SUPPLY_PROP_PD_VOLTAGE_MAX, &val);
 
@@ -5292,49 +5287,11 @@ struct usbpd *usbpd_create(struct device *parent)
 	extcon_set_property_capability(pd->extcon, EXTCON_USB_HOST,
 			EXTCON_PROP_USB_SS);
 
-	pd->vbus = devm_regulator_get(parent, "vbus");
-	if (IS_ERR(pd->vbus)) {
-		ret = PTR_ERR(pd->vbus);
-		goto put_psy;
-	}
-
-	pd->vconn = devm_regulator_get(parent, "vconn");
-	if (IS_ERR(pd->vconn)) {
-		ret = PTR_ERR(pd->vconn);
-		goto put_psy;
-	}
-
-	ret = of_property_read_u32(parent->of_node, "mi,limit_pd_vbus",
-			&pd->limit_pd_vbus);
-	if (ret) {
-		usbpd_err(&pd->dev, "failed to read pd vbus limit\n");
-		pd->limit_pd_vbus = true;
-	}
-
-    ret = of_property_read_u32(parent->of_node, "mi,pd_curr_limit",
-			&pd->limit_curr);
-	if (ret) {
-		usbpd_err(&pd->dev, "do not limit current\n");
-		pd->limit_curr = true;
-	}
-
-	if (pd->limit_pd_vbus) {
-		ret = of_property_read_u32(parent->of_node, "mi,pd_vbus_max_limit",
-				&pd->pd_vbus_max_limit);
-		if (ret) {
-			usbpd_err(&pd->dev, "failed to read pd vbus max limit\n");
-			pd->pd_vbus_max_limit = PD_VBUS_MAX_VOLTAGE_LIMIT;
-		}
-	}
-
-    if (pd->limit_curr) {
-		ret = of_property_read_u32(parent->of_node, "mi,pd_max_curr_limit",
-				&pd->pd_max_curr_limit);
-		if (ret) {
-			usbpd_err(&pd->dev, "failed to read pd vbus max limit\n");
-			pd->pd_max_curr_limit = PD_MAX_CURRENT_LIMIT;
-		}
-	}
+	pd->non_qcom_pps_ctr = true;
+	pd->limit_pd_vbus = false;
+	pd->limit_curr = false;
+	pd->pd_vbus_max_limit = PD_VBUS_MAX_VOLTAGE_LIMIT;
+	pd->pd_max_curr_limit = PD_MAX_CURRENT_LIMIT;
 
 	pd->num_sink_caps = device_property_read_u32_array(parent,
 			"qcom,default-sink-caps", NULL, 0);
