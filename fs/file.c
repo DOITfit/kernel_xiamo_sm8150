@@ -697,7 +697,6 @@ loop:
 		else if (!get_file_rcu_many(file, refs))
 			goto loop;
 		else if (__fcheck_files(files, fd) != file) {
-			fput_many(file, refs);
 			goto loop;
 		}
 	}
